@@ -567,7 +567,7 @@ function App(){
       const today=getTodayKey();
       if(win==="am"&&lastRefreshAm===today)return;
       if(win==="pm"&&lastRefreshPm===today)return;
-      runScheduledRefresh(win,tradesRef,equitiesRef,setTrades,setEquities,setLastRefreshAm,setLastRefreshPm,setRefreshStatus);
+      /* DISABLED — refresh now runs server-side via the Cloudflare Worker cron (free APIs, no Anthropic spend). Re-enable here only if the Worker is decommissioned. */
     }
     tid=setTimeout(check,4000);
     iid=setInterval(check,600000);
