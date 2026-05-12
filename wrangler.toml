@@ -1,0 +1,12 @@
+name = "alfie-proxy"
+main = "worker.js"
+compatibility_date = "2026-05-11"
+
+[vars]
+SUPABASE_URL = "https://fkaegalhseaihongoreq.supabase.co"
+
+[triggers]
+crons = [
+  "0 22 * * 1-5",
+  "0 11 * * 1-5"
+]
