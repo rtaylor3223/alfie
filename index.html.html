@@ -626,12 +626,23 @@ function AgentReport(){
     if(!supabase){alert("Supabase required to run agents.");return;}
     setRunning(true);
     try{
-      // Strategist Agent
-      const strategistRes=await callAPI([{role:"user",content:`You are the Strategist Agent for Alfie, a personal trading system. Search the web for: current macro conditions, FRED economic data, overseas market activity (European and Asian markets), and any major earnings or geopolitical developments. Build a structured macro thesis. Return ONLY JSON: {"summary":"2-3 sentence macro thesis","regime":"risk-on|risk-off|neutral","keyThemes":[{"theme":"","implication":"","probability":0}],"sectorBias":{"favor":[""],"avoid":[""]},"riskTriggers":[""],"confidence":0}`}],true);
+      // ── Build trading history context from notes ──────────────────────
+      const allTrades=await dbGet("alfie_trades")||[];
+      const closedTrades=allTrades.filter(t=>t.status==="closed"&&t.isOption);
+      const openTrades=allTrades.filter(t=>t.status==="open"&&t.isOption);
+      const wins=closedTrades.filter(t=>parseFloat(t.realizedPnl||0)>0).length;
+      const losses=closedTrades.filter(t=>parseFloat(t.realizedPnl||0)<0).length;
+      const winRate=closedTrades.length>0?Math.round((wins/closedTrades.length)*100):0;
+      const totalPnl=closedTrades.reduce((sum,t)=>sum+parseFloat(t.realizedPnl||0),0);
+      const closedSummary=closedTrades.slice(-20).map(t=>"("+(parseFloat(t.realizedPnl||0)>0?"WIN":"LOSS")+") "+t.ticker+" "+t.contractType+" $"+t.strike+" P&L:$"+parseFloat(t.realizedPnl||0).toFixed(0)+" Entry:"+(t.notes||"none")+" Exit:"+(t.closeNotes||"none")).join("; ")||"No closed trades yet";
+      const openSummary=openTrades.map(t=>t.ticker+" "+t.contractType+" $"+t.strike+" exp "+t.expiration+" Thesis:"+(t.notes||"none")).join("; ")||"No open positions";
+      const tradingContext="TRADER PROFILE — Win Rate: "+winRate+"% ("+wins+"W/"+losses+"L) Total P&L: $"+totalPnl.toFixed(0)+" | Recent trades: "+closedSummary+" | Open positions: "+openSummary;
+            // Strategist Agent
+      const strategistRes=await callAPI([{role:"user",content:`You are the Strategist Agent for Alfie, a personal trading system. Search the web for: current macro conditions, FRED economic data, overseas market activity (European and Asian markets), and any major earnings or geopolitical developments. Here is the trader profile to personalize your thesis:\n${tradingContext}\n\nBuild a structured macro thesis that accounts for this traders open positions and patterns. Return ONLY JSON: {"summary":"2-3 sentence macro thesis","regime":"risk-on|risk-off|neutral","keyThemes":[{"theme":"","implication":"","probability":0}],"sectorBias":{"favor":[""],"avoid":[""]},"riskTriggers":[""],"confidence":0}`}],true);
       await dbSet(AGENT_KEYS.strategist+"_"+getTodayKey(), Object.assign({},strategistRes,{runAt:new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"}),date:getTodayKey()}));
 
       // Quant Scanner Agent
-      const quantRes=await callAPI([{role:"user",content:`You are the Quant Scanner Agent. Search for top momentum stocks in leading sectors right now. For each, identify the best options contract with 60-90 day expiration that achieves a 3:1 risk/reward. Focus on: Semiconductors, Energy & Utilities, Industrials, Materials, Nuclear. Return ONLY JSON: {"scanTime":"","topPicks":[{"ticker":"","sector":"","contractType":"CALL","strike":"","expiration":"YYYY-MM-DD","premium":"","entry":"","target":"","stop":"","rr":"","grade":"A","ivPct":"","dte":0,"thesis":"one sentence"}],"marketBreadth":"","sectorLeader":""}`}],true);
+      const quantRes=await callAPI([{role:"user",content:`You are the Quant Scanner Agent. Search for top momentum stocks in leading sectors right now. For each, identify the best options contract with 60-90 day expiration that achieves a 3:1 risk/reward. Trader profile for personalization:\n${tradingContext}\n\nAvoid tickers already in open positions. Focus on: Semiconductors, Energy & Utilities, Industrials, Materials, Nuclear. Return ONLY JSON: {"scanTime":"","topPicks":[{"ticker":"","sector":"","contractType":"CALL","strike":"","expiration":"YYYY-MM-DD","premium":"","entry":"","target":"","stop":"","rr":"","grade":"A","ivPct":"","dte":0,"thesis":"one sentence"}],"marketBreadth":"","sectorLeader":""}`}],true);
       await dbSet(AGENT_KEYS.quant+"_"+getTodayKey(), Object.assign({},quantRes,{runAt:new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"}),date:getTodayKey()}));
 
       // Risk & Portfolio Agent - reads from Supabase trades/equities
@@ -639,11 +650,11 @@ function AgentReport(){
       const equitiesData=await dbGet("alfie_equities")||[];
       const openOpts=tradesData.filter(t=>t.isOption&&t.status==="open");
       const positionSummary=`Open options: ${openOpts.map(t=>`${t.ticker} ${t.contractType} $${t.strike} exp ${t.expiration}`).join(", ")||"None"} | Equities: ${equitiesData.map(e=>`${e.ticker} ${e.shares}sh @ $${e.costBasis}`).join(", ")||"None"}`;
-      const riskRes=await callAPI([{role:"user",content:`You are the Risk & Portfolio Agent. Analyze these positions for overnight risk: ${positionSummary}. Search for any after-hours news, earnings, or macro events that could affect these positions by market open. Return ONLY JSON: {"overallRisk":"low|moderate|high","alerts":[{"ticker":"","alert":"","urgency":"high|medium|low"}],"concentrationRisk":"one sentence","correlationNote":"one sentence","recommendation":"one sentence action for tomorrow","vixEnvironment":""}`}],true);
+      const riskRes=await callAPI([{role:"user",content:`You are the Risk & Portfolio Agent. Analyze these positions for overnight risk: ${positionSummary}. Trader notes for open positions:\n${tradingContext}\n\nIf the original entry thesis no longer holds based on notes, flag it as an alert. Search for any after-hours news, earnings, or macro events that could affect these positions by market open. Return ONLY JSON: {"overallRisk":"low|moderate|high","alerts":[{"ticker":"","alert":"","urgency":"high|medium|low"}],"concentrationRisk":"one sentence","correlationNote":"one sentence","recommendation":"one sentence action for tomorrow","vixEnvironment":""}`}],true);
       await dbSet(AGENT_KEYS.risk+"_"+getTodayKey(), Object.assign({},riskRes,{runAt:new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"}),date:getTodayKey()}));
 
       // Execution Agent
-      const execRes=await callAPI([{role:"user",content:`You are the Execution Agent. Based on current pre-market volatility and liquidity conditions, provide position sizing guidance for today. Return ONLY JSON: {"marketCondition":"normal|volatile|illiquid","suggestedPositionSize":"% of portfolio per trade as a number","maxContracts":0,"entryStrategy":"limit|market|scaled","notes":"one sentence on today's execution environment","vixAdjustment":"one sentence"}`}],true);
+      const execRes=await callAPI([{role:"user",content:`You are the Execution Agent. Trader has a ${winRate}% win rate over ${closedTrades.length} trades with $${totalPnl.toFixed(0)} total P&L. Adjust position sizing based on current streak — if losing streak, recommend smaller sizes. Based on current pre-market volatility and liquidity conditions, provide position sizing guidance for today. Return ONLY JSON: {"marketCondition":"normal|volatile|illiquid","suggestedPositionSize":"% of portfolio per trade as a number","maxContracts":0,"entryStrategy":"limit|market|scaled","notes":"one sentence on today's execution environment","vixAdjustment":"one sentence"}`}],true);
       await dbSet(AGENT_KEYS.execution+"_"+getTodayKey(), Object.assign({},execRes,{runAt:new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"}),date:getTodayKey()}));
 
       // Write meta record
